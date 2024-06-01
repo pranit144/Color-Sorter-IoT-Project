@@ -1,0 +1,180 @@
+#include <Servo.h>
+#include <ESP8266WiFi.h>
+#include <ThingSpeak.h>
+#include <ESP8266HTTPClient.h>
+#include <ESP8266WebServer.h>
+
+const char *myWriteAPIKey = "9B6ILVOYMUSVOADA";
+unsigned long myChannelNumber = 691885;
+const char *ssid = "rj_chets"; // Enter your WiFi Name
+const char *pass = "rj_chets"; // Enter your WiFi Password
+Servo pickServo;
+Servo dropServo;
+HTTPClient http;
+
+ESP8266WebServer server(80); // Web server instance
+
+const char *botToken = "YOUR_BOT_TOKEN"; // Replace with your Telegram bot token
+const char *chatID = "YOUR_CHAT_ID"; // Replace with your Telegram chat ID
+
+const int s0 = D4;
+const int s1 = D5;
+const int s2 = D6;
+const int s3 = D7;
+const int out = D8;
+int red = 0;
+int green = 0;
+int blue = 0;
+int redcolor = 0;
+int greencolor = 0;
+int orangecolor = 0;
+int CLOSE_ANGLE = 30; // The closing angle of the servo motor arm
+int OPEN_ANGLE = 10; // The opening angle of the servo motor arm
+
+unsigned long lastMessageTime = 0;  // Stores the last time a message was sent
+const long interval = 10000;  // Interval at which to send messages (10 seconds)
+
+void setup() {
+  Serial.begin(9600);
+  pinMode(s0, OUTPUT);
+  pinMode(s1, OUTPUT);
+  pinMode(s2, OUTPUT);
+  pinMode(s3, OUTPUT);
+  pinMode(out, INPUT);
+  digitalWrite(s0, HIGH);
+  digitalWrite(s1, HIGH);
+  pickServo.attach(D2);
+  dropServo.attach(D3);
+  pickServo.write(CLOSE_ANGLE);
+  dropServo.write(73);
+  ThingSpeak.begin(http);
+
+  Serial.println("Connecting to ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, pass);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(550);
+    Serial.print(".");
+  }
+  Serial.println("");
+  Serial.println("WiFi connected");
+
+  // Define the web server routes
+  server.on("/", HTTP_GET, handleRoot);
+  server.on("/colors", HTTP_GET, handleColors);
+
+  server.begin();
+}
+
+void loop() {
+  server.handleClient(); // Handle web server requests
+
+  digitalWrite(s2, LOW);
+  digitalWrite(s3, LOW);
+  // Count OUT, pRed, RED
+  red = pulseIn(out, digitalRead(out) == HIGH ? LOW : HIGH);
+  digitalWrite(s3, HIGH);
+  // Count OUT, pBLUE, BLUE
+  blue = pulseIn(out, digitalRead(out) == HIGH ? LOW : HIGH);
+  digitalWrite(s2, HIGH);
+  // Count OUT, pGreen, GREEN
+  green = pulseIn(out, digitalRead(out) == HIGH ? LOW : HIGH);
+  Serial.print("R Intensity:");
+  Serial.print(red, DEC);
+  Serial.print(" G Intensity: ");
+  Serial.print(green, DEC);
+  Serial.print(" B Intensity : ");
+  Serial.print(blue, DEC);
+
+  // Check if it's time to send a message
+  unsigned long currentMillis = millis();
+  if (currentMillis - lastMessageTime >= interval) {
+    lastMessageTime = currentMillis; // Update the last message time
+
+    // Send the message for the currently detected color
+    if (red < 39 && red > 29 && green < 93 && green > 83 && blue < 78 && blue > 69) {
+      sendTelegramMessage("Red color detected.");
+      dropServo.write(73);
+      delay(700);
+      redcolor++;
+      Serial.print("Red");
+      open1();
+      delay(200);
+      close1();
+      ThingSpeak.writeField(myChannelNumber, 1, redcolor, myWriteAPIKey);
+    } else if (green < 75 && green > 65 && blue < 68 && blue > 60) {
+      sendTelegramMessage("Orange color detected.");
+      dropServo.write(107);
+      delay(700);
+      orangecolor++;
+      Serial.print("Orange");
+      open1();
+      delay(200);
+      close1();
+      ThingSpeak.writeField(myChannelNumber, 2, orangecolor, myWriteAPIKey);
+    } else if (red < 46 && red > 36 && green < 46 and green > 37) {
+      sendTelegramMessage("Green color detected.");
+    } else if (red < 34 && red > 25 and green < 37 and green > 28 and blue < 53 and blue > 43) {
+      sendTelegramMessage("Yellow color detected.");
+      dropServo.write(132);
+      delay(700);
+      greencolor++;
+      Serial.print("Green");
+      open1();
+      delay(200);
+      close1();
+      ThingSpeak.writeField(myChannelNumber, 3, greencolor, myWriteAPIKey);
+    } else {
+      sendTelegramMessage("No color detected or color out of range.");
+    }
+  }
+
+  Serial.println();
+  // Other loop code if necessary
+}
+
+void open1() {
+  pickServo.write(OPEN_ANGLE);
+}
+
+void close1() {
+  pickServo.write(CLOSE_ANGLE);
+}
+
+void sendTelegramMessage(String message) {
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFiClientSecure secureClient; // Create a secure client
+    secureClient.setInsecure(); // This should ONLY be used for testing, not production
+    http.begin(secureClient, "https://api.telegram.org/bot" + String(botToken) + "/sendMessage?chat_id=" + String(chatID) + "&text=" + URLEncode(message));
+    int httpCode = http.GET();
+
+    if (httpCode > 0) {
+      String payload = http.getString();
+      Serial.println("Received payload:");
+      Serial.println(payload);
+    } else {
+      Serial.print("Error on sending message: ");
+      Serial.println(http.errorToString(httpCode));
+    }
+    http.end();
+  } else {
+    Serial.println("Error in WiFi connection");
+  }
+}
+
+String URLEncode(String msg) {
+  msg.replace(" ", "%20");
+  // Add other necessary characters to be encoded
+  return msg;
+}
+
+void handleRoot() {
+  String html = "<html><body>";
+  html += "<h1>Color Sorter IoT Project</h1>";
+  html += "<p>Detected Color: ";
+  if (red < 39 && red > 29 && green < 93 && green > 83 && blue < 78 && blue > 69) {
+    html += "Red";
+  } else if (green < 75 && green > 65 && blue < 68 && blue > 60) {
+    html += "Orange";
+  } else if (red < 46 && red > 36 && green < 46 && green > 37) {
+    html
